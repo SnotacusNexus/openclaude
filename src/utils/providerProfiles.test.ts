@@ -2,6 +2,10 @@ import { afterEach, describe, expect, mock, test } from 'bun:test'
 
 import type { ProviderProfile } from './config.js'
 
+async function importFreshProvidersModule() {
+  return import(`./model/providers.ts?ts=${Date.now()}-${Math.random()}`)
+}
+
 const originalEnv = { ...process.env }
 
 const RESTORED_KEYS = [
@@ -96,12 +100,14 @@ function buildProfile(overrides: Partial<ProviderProfile> = {}): ProviderProfile
 
 describe('applyProviderProfileToProcessEnv', () => {
   test('openai profile clears competing gemini/github flags', async () => {
-    const { applyProviderProfileToProcessEnv, getAPIProvider } =
+    const { applyProviderProfileToProcessEnv } =
       await importFreshProviderProfileModules()
     process.env.CLAUDE_CODE_USE_GEMINI = '1'
     process.env.CLAUDE_CODE_USE_GITHUB = '1'
 
     applyProviderProfileToProcessEnv(buildProfile())
+    const { getAPIProvider: getFreshAPIProvider } =
+      await importFreshProvidersModule()
 
     expect(process.env.CLAUDE_CODE_USE_GEMINI).toBeUndefined()
     expect(process.env.CLAUDE_CODE_USE_GITHUB).toBeUndefined()
@@ -109,11 +115,11 @@ describe('applyProviderProfileToProcessEnv', () => {
     expect(process.env.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID).toBe(
       'provider_test',
     )
-    expect(getAPIProvider()).toBe('openai')
+    expect(getFreshAPIProvider()).toBe('openai')
   })
 
   test('anthropic profile clears competing gemini/github flags', async () => {
-    const { applyProviderProfileToProcessEnv, getAPIProvider } =
+    const { applyProviderProfileToProcessEnv } =
       await importFreshProviderProfileModules()
     process.env.CLAUDE_CODE_USE_GEMINI = '1'
     process.env.CLAUDE_CODE_USE_GITHUB = '1'
@@ -125,11 +131,13 @@ describe('applyProviderProfileToProcessEnv', () => {
         model: 'claude-sonnet-4-6',
       }),
     )
+    const { getAPIProvider: getFreshAPIProvider } =
+      await importFreshProvidersModule()
 
     expect(process.env.CLAUDE_CODE_USE_GEMINI).toBeUndefined()
     expect(process.env.CLAUDE_CODE_USE_GITHUB).toBeUndefined()
     expect(process.env.CLAUDE_CODE_USE_OPENAI).toBeUndefined()
-    expect(getAPIProvider()).toBe('firstParty')
+    expect(getFreshAPIProvider()).toBe('firstParty')
   })
 })
 
