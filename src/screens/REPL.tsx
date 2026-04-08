@@ -238,6 +238,7 @@ import { usePromptsFromClaudeInChrome } from 'src/hooks/usePromptsFromClaudeInCh
 import { getTipToShowOnSpinner, recordShownTip } from 'src/services/tips/tipScheduler.js';
 import type { Theme } from 'src/utils/theme.js';
 import { isPromptTypingSuppressionActive } from './replInputSuppression.js';
+import { shouldRunStartupChecks, STARTUP_CHECK_DELAY_MS } from './replStartupGates.js';
 import { checkAndDisableBypassPermissionsIfNeeded, checkAndDisableAutoModeIfNeeded, useKickOffCheckAndDisableBypassPermissionsIfNeeded, useKickOffCheckAndDisableAutoModeIfNeeded } from 'src/utils/permissions/bypassPermissionsKillswitch.js';
 import { SandboxManager } from 'src/utils/sandbox/sandbox-adapter.js';
 import { SANDBOX_NETWORK_ACCESS_TOOL_NAME } from 'src/cli/structuredIO.js';
@@ -792,10 +793,20 @@ export function REPL({
   // accepts, and only then is the REPL component mounted and this effect runs.
   // This ensures that plugin installations from repository and user settings only
   // happen after explicit user consent to trust the current working directory.
+  // We defer startup checks by STARTUP_CHECK_DELAY_MS and gate on
+  // promptTypingSuppressionActive so that plugin loading doesn't steal focus
+  // from the prompt during the vulnerable startup window (issue #363).
+  const startupChecksStartedRef = React.useRef(false)
   useEffect(() => {
-    if (isRemoteSession) return;
-    void performStartupChecks(setAppState);
-  }, [setAppState, isRemoteSession]);
+    if (isRemoteSession) return
+    if (startupChecksStartedRef.current) return
+    const timer = setTimeout(() => {
+      if (!shouldRunStartupChecks(isRemoteSession, startupChecksStartedRef.current, promptTypingSuppressionActive)) return
+      startupChecksStartedRef.current = true
+      void performStartupChecks(setAppState)
+    }, STARTUP_CHECK_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [setAppState, isRemoteSession, promptTypingSuppressionActive])
 
   // Allow Claude in Chrome MCP to send prompts through MCP notifications
   // and sync permission mode changes to the Chrome extension
@@ -2061,13 +2072,14 @@ export function REPL({
     if (allowDialogsWithAnimation && showRemoteCallout) return 'remote-callout';
 
     // LSP plugin recommendation (lowest priority - non-blocking suggestion)
-    if (allowDialogsWithAnimation && lspRecommendation) return 'lsp-recommendation';
+  // Suppress during startup window to prevent stealing focus from the prompt (issue #363)
+  if (allowDialogsWithAnimation && lspRecommendation && startupChecksStartedRef.current) return 'lsp-recommendation';
 
-    // Plugin hint from CLI/SDK stderr (same priority band as LSP rec)
-    if (allowDialogsWithAnimation && hintRecommendation) return 'plugin-hint';
+  // Plugin hint from CLI/SDK stderr (same priority band as LSP rec)
+  if (allowDialogsWithAnimation && hintRecommendation && startupChecksStartedRef.current) return 'plugin-hint';
 
-    // Desktop app upsell (max 3 launches, lowest priority)
-    if (allowDialogsWithAnimation && showDesktopUpsellStartup) return 'desktop-upsell';
+  // Desktop app upsell (max 3 launches, lowest priority)
+  if (allowDialogsWithAnimation && showDesktopUpsellStartup && startupChecksStartedRef.current) return 'desktop-upsell';
     return undefined;
   }
   const focusedInputDialog = getFocusedInputDialog();
